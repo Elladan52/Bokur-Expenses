@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full font-sans antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SheetBot - Chat Expense Tracker for Google Sheets</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fonts: Inter & JetBrains Mono -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        chat: {
+                            bg: '#0f172a',
+                            surface: '#1e293b',
+                            bubbleUser: '#2563eb',
+                            bubbleBot: '#334155',
+                            border: '#334155'
+                        },
+                        gsheet: {
+                            green: '#0f9d58',
+                            hover: '#0b8043'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Scrollbar for chat pane */
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        /* Smooth message animations */
+        @keyframes popIn {
+            0% { opacity: 0; transform: translateY(12px) scale(0.97); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .animate-pop-in { animation: popIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    </style>
+</head>
+<body class="h-full bg-slate-900 text-slate-100 flex flex-col justify-between overflow-hidden">
+
+    <!-- App Header / Toolbar -->
+    <header class="bg-slate-800/90 backdrop-blur-md border-b border-slate-700/80 px-4 py-3 flex items-center justify-between z-20 flex-shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="relative">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+                    <i class="ph-bold ph-table text-xl"></i>
+                </div>
+                <span id="syncIndicatorDot" class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-amber-500 border-2 border-slate-800 rounded-full" title="Sync Status"></span>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <h1 class="font-bold text-sm sm:text-base text-white tracking-tight">SheetBot Expenses</h1>
+                    <span id="syncStatusBadge" class="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full font-medium hidden sm:inline-block">Local Mode</span>
+                </div>
+                <p class="text-[11px] text-slate-400">Type natural expenses & sync directly to Google Sheets</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <!-- Toggle View Mode Button (Chat vs Table) -->
+            <div class="bg-slate-900/80 p-1 rounded-xl border border-slate-700 flex items-center space-x-1">
+                <button id="viewChatBtn" onclick="switchView('chat')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white shadow-sm transition flex items-center space-x-1">
+                    <i class="ph-bold ph-chat-teardrop-text"></i>
+                    <span class="hidden md:inline">Chat</span>
+                </button>
+                <button id="viewTableBtn" onclick="switchView('table')" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
+                    <i class="ph-bold ph-table"></i>
+                    <span class="hidden md:inline">Sheet Table</span>
+                </button>
+            </div>
+
+            <!-- Settings / Setup Modal Trigger -->
+            <button onclick="openModal('setupModal')" class="p-2 rounded-xl bg-slate-700/60 hover:bg-slate-700 border border-slate-600 text-slate-200 transition" title="Google Sheets Integration Setup">
+                <i class="ph-bold ph-gear text-lg"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN CONTAINER: CHAT VIEW & TABLE VIEW -->
+    <main class="flex-1 relative flex flex-col min-h-0 bg-slate-900">
+        
+        <!-- VIEW 1: CHAT INTERFACE -->
+        <div id="chatViewContainer" class="flex-1 flex flex-col h-full overflow-hidden">
+            
+            <!-- Chat Messages Log Window -->
+            <div id="chatWindow" class="flex-1 p-4 overflow-y-auto space-y-4 custom-scrollbar">
+                
+                <!-- Bot Welcome Message -->
+                <div class="flex items-start space-x-2.5 animate-pop-in">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 text-sm font-bold shadow-md shadow-emerald-600/20">
+                        <i class="ph-bold ph-robot"></i>
+                    </div>
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-slate-800 border border-slate-700/80 rounded-2xl rounded-tl-none p-3.5 shadow-sm text-xs sm:text-sm text-slate-200">
+                        <p class="font-semibold text-emerald-400 mb-1">Hi there! 👋 I'm your Google Sheets Expense Bot.</p>
+                        <p class="leading-relaxed">Just send me expenses in plain English! I'll automatically parse the amount, description, and category, then log them to your sheet.</p>
+                        <div class="mt-3 p-2.5 bg-slate-900/60 rounded-xl border border-slate-700/50 text-[11px] font-mono text-slate-300 space-y-1">
+                            <p class="text-slate-400 font-sans font-medium text-[10px] uppercase tracking-wider">Try typing:</p>
+                            <p class="text-emerald-300">$200 for printer resin</p>
+                            <p class="text-emerald-300">$45 groceries at Walmart</p>
+                            <p class="text-emerald-300">12.50 coffee with client</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Quick Phrase Suggestions Toolbar -->
+            <div class="px-4 py-2 bg-slate-900/90 border-t border-slate-800 flex items-center space-x-2 overflow-x-auto custom-scrollbar flex-shrink-0">
+                <span class="text-[10px] uppercase font-bold text-slate-500 whitespace-nowrap">Quick Test:</span>
+                <button onclick="fillExample('$200 for printer resin')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-mono border border-slate-700 whitespace-nowrap transition">$200 for printer resin</button>
+                <button onclick="fillExample('$48.50 office supplies')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-mono border border-slate-700 whitespace-nowrap transition">$48.50 office supplies</button>
+                <button onclick="fillExample('$14.25 lunch at Chipotle')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-mono border border-slate-700 whitespace-nowrap transition">$14.25 lunch</button>
+                <button onclick="fillExample('$120 electric bill')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-mono border border-slate-700 whitespace-nowrap transition">$120 electric bill</button>
+            </div>
+
+            <!-- Chat Input Footer -->
+            <div class="p-3 sm:p-4 bg-slate-800 border-t border-slate-700/80 flex-shrink-0">
+                <form id="expenseForm" onsubmit="handleSendExpense(event)" class="max-w-4xl mx-auto relative flex items-center">
+                    <input 
+                        type="text" 
+                        id="chatInput" 
+                        placeholder="Type expense (e.g., '$200 for printer resin')..." 
+                        autocomplete="off"
+                        class="w-full pl-4 pr-12 py-3.5 rounded-2xl bg-slate-900 border border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-100 text-sm placeholder-slate-500 outline-none transition shadow-inner"
+                    />
+                    <button 
+                        type="submit" 
+                        id="sendBtn"
+                        class="absolute right-2 p-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition shadow-md shadow-blue-600/30 flex items-center justify-center"
+                        title="Log Expense"
+                    >
+                        <i class="ph-bold ph-paper-plane-right text-base"></i>
+                    </button>
+                </form>
+            </div>
+
+        </div>
+
+        <!-- VIEW 2: SPREADSHEET TABLE PREVIEW (HIDDEN BY DEFAULT) -->
+        <div id="tableViewContainer" class="hidden flex-1 flex-col h-full p-4 sm:p-6 overflow-hidden">
+            
+            <!-- Table Header Stats & Actions -->
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 flex-shrink-0">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center space-x-2">
+                        <i class="ph-bold ph-table text-emerald-400 text-xl"></i>
+                        <span>Google Sheet Row Log</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Preview of formatted rows synced or ready for copy to Google Sheets</p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                    <!-- Total Sum Badge -->
+                    <div class="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl flex items-center space-x-2 text-xs">
+                        <span class="text-slate-400 uppercase font-bold text-[10px]">Total Logged:</span>
+                        <span id="totalAmountBadge" class="font-mono font-bold text-emerald-400 text-sm">$0.00</span>
+                    </div>
+
+                    <button onclick="copyTableForGoogleSheets()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs flex items-center space-x-1.5 transition shadow-sm">
+                        <i class="ph-bold ph-copy"></i>
+                        <span>Copy for Sheet (Ctrl+V)</span>
+                    </button>
+
+                    <button onclick="exportCSV()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold border border-slate-700 rounded-xl text-xs flex items-center space-x-1.5 transition">
+                        <i class="ph-bold ph-download-simple"></i>
+                        <span>Export CSV</span>
+                    </button>
+
+                    <button onclick="clearAllExpenses()" class="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-semibold border border-rose-500/20 rounded-xl text-xs transition">
+                        <i class="ph-bold ph-trash"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Table Output Box -->
+            <div class="flex-1 bg-slate-800 border border-slate-700 rounded-2xl overflow-hidden shadow-xl flex flex-col">
+                <div class="overflow-x-auto overflow-y-auto custom-scrollbar flex-1">
+                    <table class="w-full text-left border-collapse text-xs sm:text-sm">
+                        <thead class="bg-slate-900/90 text-slate-400 font-mono text-[11px] uppercase tracking-wider sticky top-0 border-b border-slate-700 z-10">
+                            <tr>
+                                <th class="py-3 px-4 w-12 text-center">Col A</th>
+                                <th class="py-3 px-4 font-bold text-emerald-400">Amount ($)</th>
+                                <th class="py-3 px-4 font-bold text-slate-200">Col B: Description / Item</th>
+                                <th class="py-3 px-4 font-bold text-blue-400">Col C: Category</th>
+                                <th class="py-3 px-4 font-bold text-slate-400">Col D: Date / Time</th>
+                                <th class="py-3 px-4 text-center">Status</th>
+                                <th class="py-3 px-4 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="expenseTableBody" class="divide-y divide-slate-700/60 font-sans text-slate-200">
+                            <!-- Table Rows Dynamic Insertion -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- GOOGLE SHEETS SETUP & WEBHOOK MODAL -->
+    <div id="setupModal" class="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-800 rounded-2xl max-w-lg w-full border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <!-- Modal Header -->
+            <div class="p-4 sm:p-5 bg-slate-900 border-b border-slate-700/80 flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+                        <i class="ph-bold ph-google-logo text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-white">Google Sheets Integration Setup</h3>
+                        <p class="text-[11px] text-slate-400">Sync expenses instantly into your personal sheet</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('setupModal')" class="text-slate-400 hover:text-white p-1 rounded-lg">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Modal Content / Step-by-step -->
+            <div class="p-5 overflow-y-auto custom-scrollbar space-y-4 text-xs text-slate-300">
+                
+                <!-- Method Selection Tabs -->
+                <div>
+                    <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sync Method</label>
+                    <div class="p-3 bg-slate-900 border border-slate-700 rounded-xl space-y-2">
+                        <p class="font-semibold text-white">⚡ Method 1: Free Google Apps Script Webhook (Recommended)</p>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            Requires a 1-minute setup. The web app sends HTTP POST directly into your Google Sheet without OAuth authorization headaches!
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Webhook URL Input -->
+                <div>
+                    <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Google Webhook Web App URL</label>
+                    <input 
+                        type="url" 
+                        id="webhookUrlInput" 
+                        placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
+                        class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
+                    />
+                </div>
+
+                <!-- Step-by-Step Instructions -->
+                <div class="p-3 bg-slate-900/60 rounded-xl border border-slate-700/80 space-y-2">
+                    <p class="font-bold text-emerald-400 flex items-center space-x-1">
+                        <i class="ph-bold ph-list-numbers text-base"></i>
+                        <span>How to get your Webhook URL in 60 seconds:</span>
+                    </p>
+                    <ol class="list-decimal pl-4 space-y-1.5 text-slate-300 text-[11px]">
+                        <li>Open your Google Sheet at <a href="https://sheets.new" target="_blank" class="text-blue-400 underline">sheets.new</a>.</li>
+                        <li>Click <strong>Extensions</strong> &gt; <strong>Apps Script</strong>.</li>
+                        <li>Delete existing code and paste this snippet:</li>
+                    </ol>
+
+                    <!-- Apps Script Code Snippet -->
+                    <div class="relative mt-2">
+                        <pre class="bg-slate-950 p-2.5 rounded-lg text-[10px] font-mono text-emerald-300 overflow-x-auto border border-slate-800">
+function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = JSON.parse(e.postData.contents);
+  sheet.appendRow([data.amount, data.description, data.category, data.date]);
+  return ContentService.createTextOutput(JSON.stringify({'result': 'success'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}</pre>
+                        <button onclick="copyAppsScriptCode()" class="absolute top-2 right-2 px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] rounded border border-slate-700 font-mono flex items-center space-x-1">
+                            <i class="ph-bold ph-copy"></i>
+                            <span>Copy</span>
+                        </button>
+                    </div>
+
+                    <ol start="4" class="list-decimal pl-4 space-y-1.5 text-slate-300 text-[11px] mt-2">
+                        <li>Click <strong>Deploy</strong> &gt; <strong>New Deployment</strong>.</li>
+                        <li>Select type: <strong>Web App</strong>. Set "Who has access" to <strong>Anyone</strong>.</li>
+                        <li>Click <strong>Deploy</strong> and paste the resulting Web App URL above!</li>
+                    </ol>
+                </div>
+
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="p-4 bg-slate-900 border-t border-slate-700/80 flex items-center justify-end space-x-2">
+                <button onclick="closeModal('setupModal')" class="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white">Cancel</button>
+                <button onclick="saveSyncSettings()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition shadow-md shadow-emerald-600/20">Save Integration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-20 sm:bottom-6 right-6 bg-slate-800 text-white border border-slate-700 px-4 py-3 rounded-2xl shadow-2xl flex items-center space-x-3 transition-all duration-300 transform translate-y-24 opacity-0 z-50">
+        <div id="toastIcon" class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-sm">
+            <i class="ph-bold ph-check"></i>
+        </div>
+        <span id="toastMsg" class="text-xs font-medium">Notification message</span>
+    </div>
+
+    <script>
+        // App State
+        let expenses = [];
+        let config = {
+            webhookUrl: ''
+        };
+
+        // DOM Ready Load
+        window.addEventListener('DOMContentLoaded', () => {
+            // Load persistent storage
+            const storedConfig = localStorage.getItem('sheetbot_config');
+            if (storedConfig) {
+                config = JSON.parse(storedConfig);
+                document.getElementById('webhookUrlInput').value = config.webhookUrl || '';
+            }
+
+            const storedExpenses = localStorage.getItem('sheetbot_expenses');
+            if (storedExpenses) {
+                try {
+                    expenses = JSON.parse(storedExpenses);
+                    renderExpenses();
+                } catch(e) {
+                    expenses = [];
+                }
+            }
+
+            updateSyncBadge();
+            document.getElementById('chatInput').focus();
+        });
+
+        // Smart Natural Language Parser Engine
+        function parseExpenseQuery(input) {
+            const raw = input.trim();
+            if (!raw) return null;
+
+            // 1. Amount Extraction Regex
+            // Matches: $200, $200.50, 200$, 200 USD, 200.50
+            const amountRegex = /(?:\$\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*\$|(\d+(?:\.\d{1,2})?)\s*(?:usd|dollars)?)/i;
+            const amountMatch = raw.match(amountRegex);
+
+            let amount = 0;
+            if (amountMatch) {
+                amount = parseFloat(amountMatch[1] || amountMatch[2] || amountMatch[3]);
+            }
+
+            // 2. Extract Description (Clean out amount and common prepositions)
+            let description = raw.replace(amountRegex, '')
+                                 .replace(/^\s*(for|on|at|bought|paid|spent|a|an)\s+/i, '')
+                                 .replace(/\s+/g, ' ')
+                                 .trim();
+
+            if (!description && amount > 0) {
+                description = "Uncategorized Expense";
+            }
+
+            // Capitalize first letter
+            if (description) {
+                description = description.charAt(0).toUpperCase() + description.slice(1);
+            }
+
+            // 3. Category Auto-Detection Engine
+            const category = detectCategory(description);
+
+            // 4. Timestamp
+            const now = new Date();
+            const timestamp = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + 
+                              ' ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            return {
+                id: Date.now().toString(),
+                amount: amount,
+                description: description || "Expense",
+                category: category,
+                date: timestamp,
+                synced: false
+            };
+        }
+
+        // Category Keyword Matcher
+        function detectCategory(desc) {
+            const lower = desc.toLowerCase();
+
+            if (/(resin|filament|paper|pen|stapler|office|printer|ink|desk|folder|supplies)/i.test(lower)) {
+                return 'Office Supplies';
+            }
+            if (/(coffee|starbucks|lunch|dinner|breakfast|groceries|walmart|food|burger|pizza|restaurant|uber eats|doordash)/i.test(lower)) {
+                return 'Food & Dining';
+            }
+            if (/(electric|water|gas|wifi|internet|phone|bill|utility|rent|cloud|aws|hosting)/i.test(lower)) {
+                return 'Utilities & Software';
+            }
+            if (/(uber|lyft|flight|hotel|taxi|gasoline|fuel|parking|subway|train|travel)/i.test(lower)) {
+                return 'Travel & Transport';
+            }
+            if (/(laptop|monitor|mouse|keyboard|cable|ipad|iphone|tech|gadget|software)/i.test(lower)) {
+                return 'Technology & Equipment';
+            }
+
+            return 'General Expense';
+        }
+
+        // Form Submit Handler
+        async function handleSendExpense(e) {
+            e.preventDefault();
+            const inputEl = document.getElementById('chatInput');
+            const query = inputEl.value;
+
+            if (!query.trim()) return;
+
+            const parsed = parseExpenseQuery(query);
+            if (!parsed || parsed.amount === 0) {
+                renderUserMessage(query);
+                renderBotMessage("⚠️ I couldn't find a valid expense amount in that message. Try typing something like **$200 for printer resin**.");
+                inputEl.value = '';
+                return;
+            }
+
+            // Render User Chat Bubble
+            renderUserMessage(query);
+            inputEl.value = '';
+
+            // Add to State
+            expenses.unshift(parsed);
+            saveExpensesToStorage();
+
+            // Attempt Google Sheets Sync if Webhook configured
+            if (config.webhookUrl) {
+                renderBotMessage(`⏳ Logging **$${parsed.amount.toFixed(2)}** for *${parsed.description}* (${parsed.category}) to Google Sheets...`, parsed.id);
+                const success = await syncToGoogleSheets(parsed);
+                
+                if (success) {
+                    parsed.synced = true;
+                    saveExpensesToStorage();
+                    updateBotMessage(parsed.id, `✅ **Success!** Added to Google Sheets:<br><span class="font-mono text-[11px] text-emerald-300">[$${parsed.amount.toFixed(2)} | ${parsed.description} | ${parsed.category}]</span>`);
+                } else {
+                    updateBotMessage(parsed.id, `⚠️ Saved locally, but failed to connect to Webhook URL. Check setup.`);
+                }
+            } else {
+                renderBotMessage(`✅ Logged **$${parsed.amount.toFixed(2)}** for *${parsed.description}* under **${parsed.category}**.<br><span class="text-[11px] text-slate-400">(Saved locally. Add Webhook URL in settings to auto-sync to Sheets!)</span>`);
+            }
+
+            renderExpenses();
+        }
+
+        function renderUserMessage(text) {
+            const chatWin = document.getElementById('chatWindow');
+            const msgHtml = `
+                <div class="flex items-start justify-end space-x-2 animate-pop-in">
+                    <div class="max-w-[85%] sm:max-w-[70%] bg-blue-600 text-white rounded-2xl rounded-tr-none p-3 shadow-md text-xs sm:text-sm font-medium">
+                        ${escapeHtml(text)}
+                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-blue-700 text-white flex items-center justify-center flex-shrink-0 text-xs font-bold shadow">
+                        <i class="ph-bold ph-user"></i>
+                    </div>
+                </div>
+            `;
+            chatWin.insertAdjacentHTML('beforeend', msgHtml);
+            scrollChatToBottom();
+        }
+
+        function renderBotMessage(htmlContent, msgId = null) {
+            const chatWin = document.getElementById('chatWindow');
+            const idAttr = msgId ? `id="botMsg-${msgId}"` : '';
+            const msgHtml = `
+                <div class="flex items-start space-x-2.5 animate-pop-in">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 text-sm font-bold shadow-md shadow-emerald-600/20">
+                        <i class="ph-bold ph-robot"></i>
+                    </div>
+                    <div ${idAttr} class="max-w-[85%] sm:max-w-[70%] bg-slate-800 border border-slate-700/80 rounded-2xl rounded-tl-none p-3.5 shadow-sm text-xs sm:text-sm text-slate-200 leading-relaxed">
+                        ${htmlContent}
+                    </div>
+                </div>
+            `;
+            chatWin.insertAdjacentHTML('beforeend', msgHtml);
+            scrollChatToBottom();
+        }
+
+        function updateBotMessage(msgId, newHtml) {
+            const msgEl = document.getElementById(`botMsg-${msgId}`);
+            if (msgEl) {
+                msgEl.innerHTML = newHtml;
+            }
+        }
+
+        function scrollChatToBottom() {
+            const chatWin = document.getElementById('chatWindow');
+            chatWin.scrollTop = chatWin.scrollHeight;
+        }
+
+        async function syncToGoogleSheets(expenseItem) {
+            if (!config.webhookUrl) return false;
+
+            try {
+                // Post payload matching standard Google Apps Script handler
+                const payload = {
+                    amount: `$${expenseItem.amount.toFixed(2)}`,
+                    description: expenseItem.description,
+                    category: expenseItem.category,
+                    date: expenseItem.date
+                };
+
+                await fetch(config.webhookUrl, {
+                    method: 'POST',
+                    mode: 'no-cors', // Apps Script web app endpoint requirement
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                return true;
+            } catch (err) {
+                console.error("Sheets Sync Error:", err);
+                return false;
+            }
+        }
+
+        // Render Table Rows
+        function renderExpenses() {
+            const tbody = document.getElementById('expenseTableBody');
+            let total = 0;
+
+            if (expenses.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="py-8 text-center text-slate-500 text-xs">
+                            <i class="ph-light ph-table text-3xl mb-1 block"></i>
+                            No expense rows logged yet. Send a chat message to start!
+                        </td>
+                    </tr>
+                `;
+                document.getElementById('totalAmountBadge').innerText = '$0.00';
+                return;
+            }
+
+            tbody.innerHTML = expenses.map((item, index) => {
+                total += item.amount;
+                return `
+                    <tr class="hover:bg-slate-700/40 transition group">
+                        <td class="py-3 px-4 font-mono text-slate-500 text-center text-xs">${expenses.length - index}</td>
+                        <td class="py-3 px-4 font-mono font-bold text-emerald-400">$${item.amount.toFixed(2)}</td>
+                        <td class="py-3 px-4 font-medium text-white">${escapeHtml(item.description)}</td>
+                        <td class="py-3 px-4">
+                            <span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                ${escapeHtml(item.category)}
+                            </span>
+                        </td>
+                        <td class="py-3 px-4 text-slate-400 text-xs font-mono">${item.date}</td>
+                        <td class="py-3 px-4 text-center">
+                            ${item.synced ? 
+                                `<span class="inline-flex items-center space-x-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20"><i class="ph-bold ph-check"></i><span>Synced</span></span>` : 
+                                `<span class="inline-flex items-center space-x-1 text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20"><span>Local</span></span>`
+                            }
+                        </td>
+                        <td class="py-3 px-4 text-right">
+                            <button onclick="deleteExpense('${item.id}')" class="text-slate-500 hover:text-rose-400 p-1 transition opacity-0 group-hover:opacity-100">
+                                <i class="ph-bold ph-trash text-sm"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            document.getElementById('totalAmountBadge').innerText = `$${total.toFixed(2)}`;
+        }
+
+        // Actions & Utilities
+        function copyTableForGoogleSheets() {
+            if (expenses.length === 0) {
+                showToast("No data available to copy", "warning");
+                return;
+            }
+
+            // Tab-separated string ideal for pasting directly into Google Sheets cells
+            const tsvRows = expenses.map(e => `${e.amount.toFixed(2)}\t${e.description}\t${e.category}\t${e.date}`).join('\n');
+
+            const listener = (event) => {
+                event.clipboardData.setData('text/plain', tsvRows);
+                event.preventDefault();
+            };
+            document.addEventListener('copy', listener);
+            document.execCommand('copy');
+            document.removeEventListener('copy', listener);
+
+            showToast("Copied formatted table! Click Cell A1 in Google Sheets and press Ctrl+V.");
+        }
+
+        function exportCSV() {
+            if (expenses.length === 0) {
+                showToast("No data to export", "warning");
+                return;
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,Amount,Description,Category,Date\n";
+            expenses.forEach(e => {
+                csvContent += `"${e.amount.toFixed(2)}","${e.description.replace(/"/g, '""')}","${e.category}","${e.date}"\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `expenses_sheet_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            showToast("Exported CSV File!");
+        }
+
+        function deleteExpense(id) {
+            expenses = expenses.filter(e => e.id !== id);
+            saveExpensesToStorage();
+            renderExpenses();
+            showToast("Expense row deleted");
+        }
+
+        function clearAllExpenses() {
+            if (confirm("Are you sure you want to clear all logged expenses?")) {
+                expenses = [];
+                saveExpensesToStorage();
+                renderExpenses();
+                showToast("Cleared all local expense logs");
+            }
+        }
+
+        function fillExample(str) {
+            document.getElementById('chatInput').value = str;
+            document.getElementById('chatInput').focus();
+        }
+
+        function switchView(mode) {
+            const chatContainer = document.getElementById('chatViewContainer');
+            const tableContainer = document.getElementById('tableViewContainer');
+            const chatBtn = document.getElementById('viewChatBtn');
+            const tableBtn = document.getElementById('viewTableBtn');
+
+            if (mode === 'chat') {
+                chatContainer.classList.remove('hidden');
+                tableContainer.classList.add('hidden');
+                tableContainer.classList.remove('flex');
+                
+                chatBtn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white shadow-sm transition flex items-center space-x-1';
+                tableBtn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1';
+            } else {
+                chatContainer.classList.add('hidden');
+                tableContainer.classList.remove('hidden');
+                tableContainer.classList.add('flex');
+
+                tableBtn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white shadow-sm transition flex items-center space-x-1';
+                chatBtn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1';
+            }
+        }
+
+        function saveSyncSettings() {
+            config.webhookUrl = document.getElementById('webhookUrlInput').value.trim();
+            localStorage.setItem('sheetbot_config', JSON.stringify(config));
+            updateSyncBadge();
+            closeModal('setupModal');
+            showToast("Google Sheets Integration Saved!");
+        }
+
+        function updateSyncBadge() {
+            const badge = document.getElementById('syncStatusBadge');
+            const dot = document.getElementById('syncIndicatorDot');
+
+            if (config.webhookUrl) {
+                badge.innerText = "Google Sync Active";
+                badge.className = "text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium hidden sm:inline-block";
+                dot.className = "absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-slate-800 rounded-full";
+            } else {
+                badge.innerText = "Local Mode";
+                badge.className = "text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full font-medium hidden sm:inline-block";
+                dot.className = "absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-amber-500 border-2 border-slate-800 rounded-full";
+            }
+        }
+
+        function saveExpensesToStorage() {
+            localStorage.setItem('sheetbot_expenses', JSON.stringify(expenses));
+        }
+
+        function copyAppsScriptCode() {
+            const code = `function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = JSON.parse(e.postData.contents);
+  sheet.appendRow([data.amount, data.description, data.category, data.date]);
+  return ContentService.createTextOutput(JSON.stringify({'result': 'success'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+            const listener = (event) => {
+                event.clipboardData.setData('text/plain', code);
+                event.preventDefault();
+            };
+            document.addEventListener('copy', listener);
+            document.execCommand('copy');
+            document.removeEventListener('copy', listener);
+            showToast("Code copied to clipboard!");
+        }
+
+        function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+        function showToast(msg, type = "success") {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            
+            toast.classList.remove('translate-y-24', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-24', 'opacity-0');
+            }, 3000);
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        }
+    </script>
+</body>
+</html>
